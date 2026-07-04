@@ -2,12 +2,22 @@
 #![no_main]
 #![no_std]
 
-use crate::GameEntity::{Empty, Food, SnakeHead, SnakeTail, SnakeWake};
 use cortex_m_rt::entry;
 use embedded_hal::delay::DelayNs;
+use embedded_hal::digital::InputPin;
+use heapless::Deque;
 use microbit::{board::Board, display::blocking::Display, hal::Timer};
+
 use panic_rtt_target as _;
 use rtt_target::rtt_init_print;
+
+const BOARD_WIDTH: usize = 5;
+const BOARD_HEIGHT: usize = 5;
+const BOARD_SIZE: usize = BOARD_WIDTH * BOARD_HEIGHT;
+const FRAME_TIME: u32 = 10; // milliseconds
+const TURN_TIME: u32 = 500; // milliseconds
+const FRAMES_PER_TURN: u32 = TURN_TIME / FRAME_TIME;
+
 /// Direction to turn, relative to current direction of travel, based on user input
 #[derive(Debug, Clone)]
 enum TurnDirection {
@@ -24,40 +34,48 @@ enum MoveDirection {
     BoardRight,
 }
 
-/// Game entities that can exist on the game board
 #[derive(Debug, Clone)]
-enum GameEntity {
-    SnakeHead(MoveDirection),
-    SnakeTail,
-    SnakeWake,
-    Food,
-    Empty,
-}
+struct SnakeSegment(usize, usize);
 
 #[derive(Debug, Clone)]
-struct GameEntityCoord(usize, usize);
+struct Food(usize, usize);
 
 #[derive(Debug, Clone)]
-struct GameBoard {
-    board_matrix: [[GameEntity; 5]; 5],
+struct GameState {
+    snake: Deque<SnakeSegment, BOARD_SIZE>,
+    food: Option<Food>,
+    move_direction: MoveDirection,
+    dead: bool,
 }
-impl GameBoard {
+impl GameState {
     fn new() -> Self {
-        GameBoard {
-            board_matrix: [
-                [
-                    SnakeTail,
-                    SnakeHead(MoveDirection::BoardRight),
-                    Empty,
-                    Empty,
-                    Empty,
-                ],
-                [Empty, Empty, Empty, Empty, Empty],
-                [Empty, Empty, Empty, Empty, Empty],
-                [Empty, Empty, Empty, Empty, Empty],
-                [Empty, Empty, Empty, Empty, Empty],
-            ],
+        let mut snake_deque = Deque::<_, BOARD_SIZE>::new();
+        snake_deque.push_front(SnakeSegment(0, 1));
+        snake_deque.push_front(SnakeSegment(0, 2));
+        snake_deque.push_back(SnakeSegment(0, 0));
+        Self {
+            snake: snake_deque,
+            food: Some(Food(4, 4)),
+            move_direction: MoveDirection::BoardRight,
+            dead: false,
         }
+    }
+
+    fn turn_right(&mut self) {
+        self.move_direction = match self.move_direction {
+            MoveDirection::BoardDown => MoveDirection::BoardLeft,
+            MoveDirection::BoardLeft => MoveDirection::BoardUp,
+            MoveDirection::BoardUp => MoveDirection::BoardRight,
+            MoveDirection::BoardRight => MoveDirection::BoardDown,
+        };
+    }
+    fn turn_left(&mut self) {
+        self.move_direction = match self.move_direction {
+            MoveDirection::BoardDown => MoveDirection::BoardRight,
+            MoveDirection::BoardLeft => MoveDirection::BoardDown,
+            MoveDirection::BoardUp => MoveDirection::BoardLeft,
+            MoveDirection::BoardRight => MoveDirection::BoardUp,
+        };
     }
 
     fn render_image(&self) -> [[u8; 5]; 5] {
@@ -69,45 +87,44 @@ impl GameBoard {
             [0, 0, 0, 0, 0],
         ];
 
-        for (row_num, row_val) in self.board_matrix.iter().enumerate() {
-            for (col_num, col_val) in row_val.iter().enumerate() {
-                image_matrix[row_num][col_num] = match col_val {
-                    SnakeHead(_) => 1,
-                    SnakeTail => 1,
-                    SnakeWake => 0,
-                    Food => 1,
-                    Empty => 0,
-                };
-            }
+        for snake_segment in self.snake.iter() {
+            image_matrix[snake_segment.0][snake_segment.1] = 1;
+        }
+
+        if let Some(food) = &self.food {
+            image_matrix[food.0][food.1] = 1;
         }
 
         image_matrix
     }
 
-    fn update(&self) {
-        // find the head
-        let mut snake_head_coord = GameEntityCoord(0, 0);
-        let mut snake_head_dir = MoveDirection::BoardRight;
-        for (row_num, row_val) in self.board_matrix.iter().enumerate() {
-            for (col_num, col_val) in row_val.iter().enumerate() {
-                match col_val {
-                    SnakeHead(dir) => {
-                        snake_head_coord = GameEntityCoord(row_num, col_num);
-                        snake_head_dir = dir.clone();
-                    }
-                    SnakeTail => {}
-                    SnakeWake => {}
-                    Food => {}
-                    Empty => {}
+    fn update(&mut self) {
+        let old_snake_head = self.snake.pop_front().unwrap();
+        let new_snake_head = match self.move_direction {
+            MoveDirection::BoardUp => SnakeSegment(old_snake_head.0 - 1, old_snake_head.1),
+            MoveDirection::BoardLeft => SnakeSegment(old_snake_head.0, old_snake_head.1 - 1),
+            MoveDirection::BoardRight => SnakeSegment(old_snake_head.0, old_snake_head.1 + 1),
+            MoveDirection::BoardDown => SnakeSegment(old_snake_head.0 + 1, old_snake_head.1),
+        };
+        // wall collision check
+        if new_snake_head.0 > (BOARD_HEIGHT - 1) || new_snake_head.1 > (BOARD_WIDTH - 1) {
+            // die
+            self.dead = true;
+        } else {
+            if let Some(food) = &self.food {
+                if food.0 == new_snake_head.0 && food.1 == new_snake_head.1 {
+                    // ate the food, remove from screen and don't shrink the tail
+                    self.food = None;
+                } else {
+                    // no food eaten, remove the tail before we add the new head
+                    self.snake.pop_back().unwrap();
                 }
+            } else {
+                self.snake.pop_back().unwrap();
             }
+            self.snake.push_front(old_snake_head);
+            self.snake.push_front(new_snake_head);
         }
-
-        // TODO: move the snake head in its direction of travel
-        // TODO: move the snake tail entities along the wake
-        // I think I'm going to have have a singly linked list representing the snake though
-        // so the snake tail entity movements can be properly coordinated, since they
-        // need to start from the head and move back along the tail
     }
 }
 
@@ -116,12 +133,56 @@ fn main() -> ! {
     rtt_init_print!();
 
     let board = Board::take().unwrap();
+
+    let mut button_a = board.buttons.button_a;
+    let mut button_b = board.buttons.button_b;
+
     let mut timer = Timer::new(board.TIMER0);
     let mut display = Display::new(board.display_pins);
-    let game_board = GameBoard::new();
+    let mut game_board = GameState::new();
+    let mut frames_in_turn_count = 0;
+
+    let mut left_button_down = false;
+    let mut right_button_down = false;
+
+    let mut left_turn_count = 0;
+    let mut right_turn_count = 0;
 
     loop {
-        // Show the game board for 1000ms
-        display.show(&mut timer, game_board.render_image(), 1000);
+        display.show(&mut timer, game_board.render_image(), FRAME_TIME);
+
+        // detect a button press on button-up, not button-down, to help avoid repeats
+        if !left_button_down && button_a.is_low().unwrap() {
+            left_button_down = true;
+        }
+        if left_button_down && button_a.is_high().unwrap() {
+            left_turn_count += 1;
+            left_button_down = false;
+        }
+
+        if !right_button_down && button_b.is_low().unwrap() {
+            right_button_down = true;
+        }
+        if right_button_down && button_b.is_high().unwrap() {
+            right_turn_count += 1;
+            right_button_down = false;
+        }
+
+        if (frames_in_turn_count == FRAMES_PER_TURN) {
+            if right_turn_count > 0 {
+                game_board.turn_right();
+            } else if left_turn_count > 0 {
+                game_board.turn_left();
+            }
+
+            game_board.update();
+            frames_in_turn_count = 0;
+            left_button_down = false;
+            right_button_down = false;
+            right_turn_count = 0;
+            left_turn_count = 0;
+        } else {
+            frames_in_turn_count += 1;
+        }
     }
 }

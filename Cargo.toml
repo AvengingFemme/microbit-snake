@@ -10,6 +10,7 @@ panic-rtt-target = "0.2.0"
 rtt-target = "0.6.2"
 microbit-v2 = "0.16.0"
 embedded-hal = "1.0.0"
+heapless = "0.9.3"
 
 [dependencies.cortex-m]
 version = "0.7.7"
