@@ -15,7 +15,7 @@ const BOARD_WIDTH: usize = 5;
 const BOARD_HEIGHT: usize = 5;
 const BOARD_SIZE: usize = BOARD_WIDTH * BOARD_HEIGHT;
 const FRAME_TIME: u32 = 10; // milliseconds
-const TURN_TIME: u32 = 500; // milliseconds
+const TURN_TIME: u32 = 400; // milliseconds
 const FRAMES_PER_TURN: u32 = TURN_TIME / FRAME_TIME;
 
 /// Direction to turn, relative to current direction of travel, based on user input
