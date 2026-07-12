@@ -5,7 +5,4 @@ chip = "nrf52833_xxAA"
 halt_afterwards = false
 
 [default.rtt]
-enabled = false
-
-[default.gdb]
 enabled = true

@@ -36,7 +36,7 @@ enum MoveDirection {
 #[derive(Debug, Clone)]
 struct SnakeSegment(usize, usize);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, defmt::Format)]
 struct Food(usize, usize);
 
 #[derive(Debug, Clone)]
@@ -48,19 +48,22 @@ struct GameState {
 }
 impl GameState {
     fn new() -> Self {
+        let food = Food(4, 4);
+        defmt::trace!("Initializing new GameState object with food: {}", food);
         let mut snake_deque = Deque::<_, BOARD_SIZE>::new();
         let _ = snake_deque.push_front(SnakeSegment(0, 1));
         let _ = snake_deque.push_front(SnakeSegment(0, 2));
         let _ = snake_deque.push_back(SnakeSegment(0, 0));
         Self {
             snake: snake_deque,
-            food: Some(Food(4, 4)),
+            food: Some(food),
             move_direction: MoveDirection::BoardRight,
             dead: false,
         }
     }
 
     fn turn_right(&mut self) {
+        defmt::trace!("Turning right");
         self.move_direction = match self.move_direction {
             MoveDirection::BoardDown => MoveDirection::BoardLeft,
             MoveDirection::BoardLeft => MoveDirection::BoardUp,
@@ -69,6 +72,7 @@ impl GameState {
         };
     }
     fn turn_left(&mut self) {
+        defmt::trace!("Turning left");
         self.move_direction = match self.move_direction {
             MoveDirection::BoardDown => MoveDirection::BoardRight,
             MoveDirection::BoardLeft => MoveDirection::BoardDown,
@@ -78,6 +82,7 @@ impl GameState {
     }
 
     fn render_image(&self) -> [[u8; 5]; 5] {
+        defmt::trace!("Begin render_image call");
         let mut image_matrix = [
             [0, 0, 0, 0, 0],
             [0, 0, 0, 0, 0],
@@ -98,6 +103,7 @@ impl GameState {
     }
 
     fn update(&mut self) {
+        defmt::trace!("begin update call");
         let old_snake_head = self.snake.pop_front().unwrap();
         let new_snake_head = match self.move_direction {
             MoveDirection::BoardUp => SnakeSegment(old_snake_head.0 - 1, old_snake_head.1),
@@ -147,6 +153,8 @@ fn main() -> ! {
     let mut right_turn_count = 0;
 
     loop {
+        defmt::trace!("Begin main loop");
+        defmt::trace!("Calling display.show");
         display.show(&mut timer, game_board.render_image(), FRAME_TIME);
 
         // detect a button press on button-up, not button-down, to help avoid repeats
