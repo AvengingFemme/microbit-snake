@@ -7,7 +7,8 @@ use embedded_hal::digital::InputPin;
 use heapless::Deque;
 use microbit::{board::Board, display::blocking::Display, hal::Timer};
 
-use panic_rtt_target as _;
+use defmt_rtt as _;
+use panic_probe as _;
 
 const BOARD_WIDTH: usize = 5;
 const BOARD_HEIGHT: usize = 5;
@@ -128,8 +129,7 @@ impl GameState {
 
 #[entry]
 fn main() -> ! {
-    rtt_init_print!();
-
+    defmt::info!("Starting snake-microbit");
     let board = Board::take().unwrap();
 
     let mut button_a = board.buttons.button_a;
