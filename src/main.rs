@@ -3,13 +3,11 @@
 #![no_std]
 
 use cortex_m_rt::entry;
-use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::InputPin;
 use heapless::Deque;
 use microbit::{board::Board, display::blocking::Display, hal::Timer};
 
 use panic_rtt_target as _;
-use rtt_target::rtt_init_print;
 
 const BOARD_WIDTH: usize = 5;
 const BOARD_HEIGHT: usize = 5;
@@ -19,11 +17,11 @@ const TURN_TIME: u32 = 400; // milliseconds
 const FRAMES_PER_TURN: u32 = TURN_TIME / FRAME_TIME;
 
 /// Direction to turn, relative to current direction of travel, based on user input
-#[derive(Debug, Clone)]
-enum TurnDirection {
-    Left,
-    Right,
-}
+// #[derive(Debug, Clone)]
+// enum TurnDirection {
+//     Left,
+//     Right,
+// }
 
 /// Direction of movement for the snake
 #[derive(Debug, Clone)]
@@ -50,9 +48,9 @@ struct GameState {
 impl GameState {
     fn new() -> Self {
         let mut snake_deque = Deque::<_, BOARD_SIZE>::new();
-        snake_deque.push_front(SnakeSegment(0, 1));
-        snake_deque.push_front(SnakeSegment(0, 2));
-        snake_deque.push_back(SnakeSegment(0, 0));
+        let _ = snake_deque.push_front(SnakeSegment(0, 1));
+        let _ = snake_deque.push_front(SnakeSegment(0, 2));
+        let _ = snake_deque.push_back(SnakeSegment(0, 0));
         Self {
             snake: snake_deque,
             food: Some(Food(4, 4)),
@@ -122,8 +120,8 @@ impl GameState {
             } else {
                 self.snake.pop_back().unwrap();
             }
-            self.snake.push_front(old_snake_head);
-            self.snake.push_front(new_snake_head);
+            let _ = self.snake.push_front(old_snake_head);
+            let _ = self.snake.push_front(new_snake_head);
         }
     }
 }
@@ -168,7 +166,7 @@ fn main() -> ! {
             right_button_down = false;
         }
 
-        if (frames_in_turn_count == FRAMES_PER_TURN) {
+        if frames_in_turn_count == FRAMES_PER_TURN {
             if right_turn_count > 0 {
                 game_board.turn_right();
             } else if left_turn_count > 0 {
