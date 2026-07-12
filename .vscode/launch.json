@@ -1,0 +1,45 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "micro:bit v2: build, flash, debug + RTT",
+      "type": "probe-rs-debug",
+      "request": "launch",
+
+      "preLaunchTask": "Build micro:bit firmware",
+
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "probe-rs",
+      "runtimeArgs": ["dap-server"],
+
+      "chip": "nRF52833_xxAA",
+      "wireProtocol": "Swd",
+
+      "flashingConfig": {
+        "flashingEnabled": true,
+        "haltAfterReset": true,
+        "formatOptions": {
+          "binaryFormat": "elf"
+        }
+      },
+
+      "coreConfigs": [
+        {
+          "coreIndex": 0,
+          "programBinary": "${workspaceFolder}/target/thumbv7em-none-eabihf/debug/microbit-snake",
+
+          "rttEnabled": true,
+          "rttChannelFormats": [
+            {
+              "channelNumber": 0,
+              "dataFormat": "String",
+              "showTimestamps": false
+            }
+          ]
+        }
+      ],
+
+      "consoleLogLevel": "Console"
+    }
+  ]
+}
