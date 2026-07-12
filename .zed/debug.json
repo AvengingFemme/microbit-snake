@@ -1,0 +1,38 @@
+[
+  {
+    "label": "micro:bit v2: probe-rs debug",
+    "adapter": "probe-rs",
+    "request": "launch",
+    "cwd": "$ZED_WORKTREE_ROOT",
+
+    "runtimeExecutable": "probe-rs",
+    "runtimeArgs": ["dap-server"],
+
+    "chip": "nRF52833_xxAA",
+    "wireProtocol": "Swd",
+    "speed": 4000,
+
+    "flashingConfig": {
+      "flashingEnabled": true,
+      "haltAfterReset": true,
+      "formatOptions": {
+        "binaryFormat": "elf"
+      }
+    },
+
+    "coreConfigs": [
+      {
+        "coreIndex": 0,
+        "programBinary": "target/thumbv7em-none-eabihf/debug/microbit-snake",
+        "rttEnabled": true
+      }
+    ],
+
+    "build": {
+      "command": "cargo",
+      "args": ["build", "--target", "thumbv7em-none-eabihf"]
+    },
+
+    "consoleLogLevel": "Info"
+  }
+]
