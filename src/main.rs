@@ -13,6 +13,7 @@ use panic_probe as _;
 const BOARD_WIDTH: usize = 5;
 const BOARD_HEIGHT: usize = 5;
 const BOARD_SIZE: usize = BOARD_WIDTH * BOARD_HEIGHT;
+const SNAKE_MAX_SIZE: usize = BOARD_SIZE + 1;
 const FRAME_TIME: u32 = 10; // milliseconds
 const TURN_TIME: u32 = 400; // milliseconds
 const FRAMES_PER_TURN: u32 = TURN_TIME / FRAME_TIME;
@@ -41,7 +42,7 @@ struct Food(usize, usize);
 
 #[derive(Debug, Clone)]
 struct GameState {
-    snake: Deque<SnakeSegment, BOARD_SIZE>,
+    snake: Deque<SnakeSegment, SNAKE_MAX_SIZE>,
     food: Option<Food>,
     move_direction: MoveDirection,
     dead: bool,
@@ -50,10 +51,22 @@ impl GameState {
     fn new() -> Self {
         let food = Food(4, 4);
         defmt::trace!("Initializing new GameState object with food: {}", food);
-        let mut snake_deque = Deque::<_, BOARD_SIZE>::new();
-        let _ = snake_deque.push_front(SnakeSegment(0, 1));
-        let _ = snake_deque.push_front(SnakeSegment(0, 2));
-        let _ = snake_deque.push_back(SnakeSegment(0, 0));
+
+        let mut snake_deque = Deque::<_, SNAKE_MAX_SIZE>::new();
+
+        let result = snake_deque.push_front(SnakeSegment(0, 1));
+        if result.is_err() {
+            defmt::error!("Snake deque full, cannot push segment!");
+        }
+        let result = snake_deque.push_front(SnakeSegment(0, 2));
+        if result.is_err() {
+            defmt::error!("Snake deque full, cannot push segment!");
+        }
+        let result = snake_deque.push_back(SnakeSegment(0, 0));
+        if result.is_err() {
+            defmt::error!("Snake deque full, cannot push segment!");
+        }
+
         Self {
             snake: snake_deque,
             food: Some(food),
@@ -104,7 +117,17 @@ impl GameState {
 
     fn update(&mut self) {
         defmt::trace!("begin update call");
-        let old_snake_head = self.snake.pop_front().unwrap();
+
+        if self.dead {
+            // don't update anything, just return
+            defmt::trace!("Not updating, snake is dead");
+            return;
+        }
+
+        let old_snake_head = defmt::expect!(
+            self.snake.pop_front(),
+            "Snake deque empty, which should never happen!"
+        );
         let new_snake_head = match self.move_direction {
             MoveDirection::BoardUp => SnakeSegment(old_snake_head.0 - 1, old_snake_head.1),
             MoveDirection::BoardLeft => SnakeSegment(old_snake_head.0, old_snake_head.1 - 1),
@@ -114,7 +137,9 @@ impl GameState {
         // wall collision check
         if new_snake_head.0 > (BOARD_HEIGHT - 1) || new_snake_head.1 > (BOARD_WIDTH - 1) {
             // die
+            defmt::info!("Snake has died by colliding with a wall");
             self.dead = true;
+            self.snake.push_front(old_snake_head).unwrap(); // have to put the old head back so it renders
         } else {
             if let Some(food) = &self.food {
                 if food.0 == new_snake_head.0 && food.1 == new_snake_head.1 {
@@ -136,7 +161,10 @@ impl GameState {
 #[entry]
 fn main() -> ! {
     defmt::info!("Starting snake-microbit");
-    let board = Board::take().unwrap();
+    let board = defmt::expect!(
+        Board::take(),
+        "Catastrophic failure, unable to take Board object!"
+    );
 
     let mut button_a = board.buttons.button_a;
     let mut button_b = board.buttons.button_b;
