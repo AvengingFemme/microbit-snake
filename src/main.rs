@@ -124,10 +124,8 @@ impl GameState {
             return;
         }
 
-        let old_snake_head = defmt::expect!(
-            self.snake.pop_front(),
-            "Snake deque empty, which should never happen!"
-        );
+        let old_snake_head =
+            defmt::expect!(self.snake.pop_front(), "Snake deque unexpectedly empty!");
         let new_snake_head = match self.move_direction {
             MoveDirection::BoardUp => SnakeSegment(old_snake_head.0 - 1, old_snake_head.1),
             MoveDirection::BoardLeft => SnakeSegment(old_snake_head.0, old_snake_head.1 - 1),
@@ -139,7 +137,10 @@ impl GameState {
             // die
             defmt::info!("Snake has died by colliding with a wall");
             self.dead = true;
-            self.snake.push_front(old_snake_head).unwrap(); // have to put the old head back so it renders
+            defmt::expect!(
+                self.snake.push_front(old_snake_head),
+                "Snake deque unexpectedly full!"
+            ); // have to put the old head back so it renders
         } else {
             if let Some(food) = &self.food {
                 if food.0 == new_snake_head.0 && food.1 == new_snake_head.1 {
@@ -147,13 +148,19 @@ impl GameState {
                     self.food = None;
                 } else {
                     // no food eaten, remove the tail before we add the new head
-                    self.snake.pop_back().unwrap();
+                    defmt::expect!(self.snake.pop_back(), "Snake deque unexpectedly empty!");
                 }
             } else {
-                self.snake.pop_back().unwrap();
+                defmt::expect!(self.snake.pop_back(), "Snake deque unexpectedly empty!");
             }
-            let _ = self.snake.push_front(old_snake_head);
-            let _ = self.snake.push_front(new_snake_head);
+            defmt::expect!(
+                self.snake.push_front(old_snake_head),
+                "Snake deque unexpectedly full!"
+            );
+            defmt::expect!(
+                self.snake.push_front(new_snake_head),
+                "Snake deque unexpectedly full!"
+            );
         }
     }
 }
@@ -186,18 +193,34 @@ fn main() -> ! {
         display.show(&mut timer, game_board.render_image(), FRAME_TIME);
 
         // detect a button press on button-up, not button-down, to help avoid repeats
-        if !left_button_down && button_a.is_low().unwrap() {
+        if !left_button_down
+            && button_a.is_low().expect(
+                "Unexpected button error, button GPIO should be infallible on target platform!",
+            )
+        {
             left_button_down = true;
         }
-        if left_button_down && button_a.is_high().unwrap() {
+        if left_button_down
+            && button_a.is_high().expect(
+                "Unexpected button error, button GPIO should be infallible on target platform!",
+            )
+        {
             left_turn_count += 1;
             left_button_down = false;
         }
 
-        if !right_button_down && button_b.is_low().unwrap() {
+        if !right_button_down
+            && button_b.is_low().expect(
+                "Unexpected button error, button GPIO should be infallible on target platform!",
+            )
+        {
             right_button_down = true;
         }
-        if right_button_down && button_b.is_high().unwrap() {
+        if right_button_down
+            && button_b.is_high().expect(
+                "Unexpected button error, button GPIO should be infallible on target platform!",
+            )
+        {
             right_turn_count += 1;
             right_button_down = false;
         }
