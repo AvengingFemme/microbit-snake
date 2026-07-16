@@ -15,8 +15,8 @@ const BOARD_HEIGHT: usize = 5;
 const BOARD_SIZE: usize = BOARD_WIDTH * BOARD_HEIGHT;
 const SNAKE_MAX_SIZE: usize = BOARD_SIZE + 1;
 const FRAME_TIME: u32 = 10; // milliseconds
-const TURN_TIME: u32 = 400; // milliseconds
-const FRAMES_PER_TURN: u32 = TURN_TIME / FRAME_TIME;
+const MOVE_TIME: u32 = 400; // milliseconds
+const FRAMES_PER_MOVE: u32 = MOVE_TIME / FRAME_TIME;
 
 /// Direction to turn, relative to current direction of travel, based on user input
 // #[derive(Debug, Clone)]
@@ -225,7 +225,7 @@ fn main() -> ! {
             right_button_down = false;
         }
 
-        if frames_in_turn_count == FRAMES_PER_TURN {
+        if frames_in_turn_count == FRAMES_PER_MOVE {
             if right_turn_count > 0 {
                 game_board.turn_right();
             } else if left_turn_count > 0 {
