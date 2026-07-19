@@ -1,11 +1,21 @@
-#![deny(unsafe_code)]
 #![no_main]
 #![no_std]
 
+use core::cell::RefCell;
+use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
 use embedded_hal::digital::InputPin;
 use heapless::Deque;
-use microbit::{board::Board, display::blocking::Display, hal::Timer};
+use microbit::{
+    board::Board,
+    display::nonblocking::{Display, GreyscaleImage},
+    hal::{
+        Timer,
+        clocks::Clocks,
+        rtc::{Rtc, RtcInterrupt},
+    },
+    pac::{self, RTC0, TIMER1, interrupt},
+};
 
 use defmt_rtt as _;
 use panic_probe as _;
@@ -94,7 +104,7 @@ impl GameState {
         };
     }
 
-    fn render_image(&self) -> [[u8; 5]; 5] {
+    fn render_image(&self) -> GreyscaleImage {
         defmt::trace!("Begin render_image call");
         let mut image_matrix = [
             [0, 0, 0, 0, 0],
@@ -105,14 +115,14 @@ impl GameState {
         ];
 
         for snake_segment in self.snake.iter() {
-            image_matrix[snake_segment.0][snake_segment.1] = 1;
+            image_matrix[snake_segment.0][snake_segment.1] = 9;
         }
 
         if let Some(food) = &self.food {
-            image_matrix[food.0][food.1] = 1;
+            image_matrix[food.0][food.1] = 7;
         }
 
-        image_matrix
+        GreyscaleImage::new(&image_matrix)
     }
 
     fn update(&mut self) {
@@ -165,19 +175,33 @@ impl GameState {
     }
 }
 
+static DISPLAY: Mutex<RefCell<Option<Display<TIMER1>>>> = Mutex::new(RefCell::new(None));
+// static FRAME_TIMER: Mutex<RefCell<Option<Rtc<RTC0>>>> = Mutex::new(RefCell::new(None));
+
 #[entry]
 fn main() -> ! {
     defmt::info!("Starting snake-microbit");
-    let board = defmt::expect!(
+    let mut board = defmt::expect!(
         Board::take(),
         "Catastrophic failure, unable to take Board object!"
     );
 
+    Clocks::new(board.CLOCK).start_lfclk(); //start low frequency clock needed by RTC0
+
     let mut button_a = board.buttons.button_a;
     let mut button_b = board.buttons.button_b;
 
-    let mut timer = Timer::new(board.TIMER0);
-    let mut display = Display::new(board.display_pins);
+    let mut display = Display::new(board.TIMER1, board.display_pins);
+
+    cortex_m::interrupt::free(move |cs| {
+        *DISPLAY.borrow(cs).borrow_mut() = Some(display);
+    });
+
+    unsafe {
+        board.NVIC.set_priority(pac::Interrupt::TIMER1, 64);
+        pac::NVIC::unmask(pac::Interrupt::TIMER1);
+    }
+
     let mut game_board = GameState::new();
     let mut frames_in_turn_count = 0;
 
@@ -190,7 +214,12 @@ fn main() -> ! {
     loop {
         defmt::trace!("Begin main loop");
         defmt::trace!("Calling display.show");
-        display.show(&mut timer, game_board.render_image(), FRAME_TIME);
+        let image = game_board.render_image();
+        cortex_m::interrupt::free(move |cs| {
+            if let Some(display) = DISPLAY.borrow(cs).borrow_mut().as_mut() {
+                display.show(&image);
+            }
+        });
 
         // detect a button press on button-up, not button-down, to help avoid repeats
         if !left_button_down
@@ -242,4 +271,13 @@ fn main() -> ! {
             frames_in_turn_count += 1;
         }
     }
+}
+
+#[interrupt]
+fn TIMER1() {
+    cortex_m::interrupt::free(move |cs| {
+        if let Some(display) = DISPLAY.borrow(cs).borrow_mut().as_mut() {
+            display.handle_display_event();
+        }
+    });
 }
