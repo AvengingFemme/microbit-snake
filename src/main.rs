@@ -176,7 +176,8 @@ impl GameState {
 }
 
 static DISPLAY: Mutex<RefCell<Option<Display<TIMER1>>>> = Mutex::new(RefCell::new(None));
-// static FRAME_TIMER: Mutex<RefCell<Option<Rtc<RTC0>>>> = Mutex::new(RefCell::new(None));
+static FRAME_TIMER: Mutex<RefCell<Option<Rtc<RTC0>>>> = Mutex::new(RefCell::new(None));
+static GAME_STATE: Mutex<RefCell<Option<
 
 #[entry]
 fn main() -> ! {
@@ -193,13 +194,21 @@ fn main() -> ! {
 
     let mut display = Display::new(board.TIMER1, board.display_pins);
 
+    let mut rtc0 = Rtc::new(board.RTC0, 63).unwrap();
+    rtc0.enable_event(RtcInterrupt::Tick);
+    rtc0.enable_interrupt(RtcInterrupt::Tick, None);
+    rtc0.enable_counter();
+
     cortex_m::interrupt::free(move |cs| {
         *DISPLAY.borrow(cs).borrow_mut() = Some(display);
+        *FRAME_TIMER.borrow(cs).borrow_mut() = Some(rtc0);
     });
 
     unsafe {
         board.NVIC.set_priority(pac::Interrupt::TIMER1, 64);
+        board.NVIC.set_priority(pac::Interrupt::RTC0, 128);
         pac::NVIC::unmask(pac::Interrupt::TIMER1);
+        pac::NVIC::unmask(pac::Interrupt::RTC0);
     }
 
     let mut game_board = GameState::new();
@@ -212,64 +221,7 @@ fn main() -> ! {
     let mut right_turn_count = 0;
 
     loop {
-        defmt::trace!("Begin main loop");
-        defmt::trace!("Calling display.show");
-        let image = game_board.render_image();
-        cortex_m::interrupt::free(move |cs| {
-            if let Some(display) = DISPLAY.borrow(cs).borrow_mut().as_mut() {
-                display.show(&image);
-            }
-        });
-
-        // detect a button press on button-up, not button-down, to help avoid repeats
-        if !left_button_down
-            && button_a.is_low().expect(
-                "Unexpected button error, button GPIO should be infallible on target platform!",
-            )
-        {
-            left_button_down = true;
-        }
-        if left_button_down
-            && button_a.is_high().expect(
-                "Unexpected button error, button GPIO should be infallible on target platform!",
-            )
-        {
-            left_turn_count += 1;
-            left_button_down = false;
-        }
-
-        if !right_button_down
-            && button_b.is_low().expect(
-                "Unexpected button error, button GPIO should be infallible on target platform!",
-            )
-        {
-            right_button_down = true;
-        }
-        if right_button_down
-            && button_b.is_high().expect(
-                "Unexpected button error, button GPIO should be infallible on target platform!",
-            )
-        {
-            right_turn_count += 1;
-            right_button_down = false;
-        }
-
-        if frames_in_turn_count == FRAMES_PER_MOVE {
-            if right_turn_count > 0 {
-                game_board.turn_right();
-            } else if left_turn_count > 0 {
-                game_board.turn_left();
-            }
-
-            game_board.update();
-            frames_in_turn_count = 0;
-            left_button_down = false;
-            right_button_down = false;
-            right_turn_count = 0;
-            left_turn_count = 0;
-        } else {
-            frames_in_turn_count += 1;
-        }
+        cortex_m::asm::wfi();
     }
 }
 
@@ -280,4 +232,66 @@ fn TIMER1() {
             display.handle_display_event();
         }
     });
+}
+
+#[interrupt]
+fn RTC0() {
+    defmt::trace!("Begin RTC frame loop");
+    defmt::trace!("Calling display.show");
+    let image = game_board.render_image();
+    cortex_m::interrupt::free(move |cs| {
+        if let Some(display) = DISPLAY.borrow(cs).borrow_mut().as_mut() {
+            display.show(&image);
+        }
+    });
+
+    // detect a button press on button-up, not button-down, to help avoid repeats
+    if !left_button_down
+        && button_a
+            .is_low()
+            .expect("Unexpected button error, button GPIO should be infallible on target platform!")
+    {
+        left_button_down = true;
+    }
+    if left_button_down
+        && button_a
+            .is_high()
+            .expect("Unexpected button error, button GPIO should be infallible on target platform!")
+    {
+        left_turn_count += 1;
+        left_button_down = false;
+    }
+
+    if !right_button_down
+        && button_b
+            .is_low()
+            .expect("Unexpected button error, button GPIO should be infallible on target platform!")
+    {
+        right_button_down = true;
+    }
+    if right_button_down
+        && button_b
+            .is_high()
+            .expect("Unexpected button error, button GPIO should be infallible on target platform!")
+    {
+        right_turn_count += 1;
+        right_button_down = false;
+    }
+
+    if frames_in_turn_count == FRAMES_PER_MOVE {
+        if right_turn_count > 0 {
+            game_board.turn_right();
+        } else if left_turn_count > 0 {
+            game_board.turn_left();
+        }
+
+        game_board.update();
+        frames_in_turn_count = 0;
+        left_button_down = false;
+        right_button_down = false;
+        right_turn_count = 0;
+        left_turn_count = 0;
+    } else {
+        frames_in_turn_count += 1;
+    }
 }
