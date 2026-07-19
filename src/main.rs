@@ -1,11 +1,20 @@
-#![deny(unsafe_code)]
 #![no_main]
 #![no_std]
 
+use core::cell::RefCell;
+use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
 use embedded_hal::digital::InputPin;
 use heapless::Deque;
-use microbit::{board::Board, display::blocking::Display, hal::Timer};
+use microbit::{
+    board::{Board, Buttons},
+    display::nonblocking::{Display, GreyscaleImage},
+    hal::{
+        clocks::Clocks,
+        rtc::{Rtc, RtcInterrupt},
+    },
+    pac::{self, RTC0, TIMER1, interrupt},
+};
 
 use defmt_rtt as _;
 use panic_probe as _;
@@ -15,7 +24,7 @@ const BOARD_HEIGHT: usize = 5;
 const BOARD_SIZE: usize = BOARD_WIDTH * BOARD_HEIGHT;
 const SNAKE_MAX_SIZE: usize = BOARD_SIZE + 1;
 const FRAME_TIME: u32 = 10; // milliseconds
-const MOVE_TIME: u32 = 400; // milliseconds
+const MOVE_TIME: u32 = 800; // milliseconds
 const FRAMES_PER_MOVE: u32 = MOVE_TIME / FRAME_TIME;
 
 /// Direction to turn, relative to current direction of travel, based on user input
@@ -46,6 +55,14 @@ struct GameState {
     food: Option<Food>,
     move_direction: MoveDirection,
     dead: bool,
+
+    frames_in_turn_count: u32,
+
+    left_button_down: bool,
+    right_button_down: bool,
+
+    left_turn_count: u8,
+    right_turn_count: u8,
 }
 impl GameState {
     fn new() -> Self {
@@ -72,6 +89,13 @@ impl GameState {
             food: Some(food),
             move_direction: MoveDirection::BoardRight,
             dead: false,
+            frames_in_turn_count: 0,
+
+            left_button_down: false,
+            right_button_down: false,
+
+            left_turn_count: 0,
+            right_turn_count: 0,
         }
     }
 
@@ -94,7 +118,7 @@ impl GameState {
         };
     }
 
-    fn render_image(&self) -> [[u8; 5]; 5] {
+    fn render_image(&self) -> GreyscaleImage {
         defmt::trace!("Begin render_image call");
         let mut image_matrix = [
             [0, 0, 0, 0, 0],
@@ -105,14 +129,14 @@ impl GameState {
         ];
 
         for snake_segment in self.snake.iter() {
-            image_matrix[snake_segment.0][snake_segment.1] = 1;
+            image_matrix[snake_segment.0][snake_segment.1] = 9;
         }
 
         if let Some(food) = &self.food {
-            image_matrix[food.0][food.1] = 1;
+            image_matrix[food.0][food.1] = 6;
         }
 
-        image_matrix
+        GreyscaleImage::new(&image_matrix)
     }
 
     fn update(&mut self) {
@@ -165,81 +189,134 @@ impl GameState {
     }
 }
 
+struct PeripheralsTaken {
+    buttons: Buttons,
+}
+
+static DISPLAY: Mutex<RefCell<Option<Display<TIMER1>>>> = Mutex::new(RefCell::new(None));
+static FRAME_TIMER: Mutex<RefCell<Option<Rtc<RTC0>>>> = Mutex::new(RefCell::new(None));
+static GAME_STATE: Mutex<RefCell<Option<GameState>>> = Mutex::new(RefCell::new(None));
+static PERIPHERALS: Mutex<RefCell<Option<PeripheralsTaken>>> = Mutex::new(RefCell::new(None));
+
 #[entry]
 fn main() -> ! {
     defmt::info!("Starting snake-microbit");
-    let board = defmt::expect!(
+    let mut board = defmt::expect!(
         Board::take(),
         "Catastrophic failure, unable to take Board object!"
     );
 
-    let mut button_a = board.buttons.button_a;
-    let mut button_b = board.buttons.button_b;
+    Clocks::new(board.CLOCK).start_lfclk(); //start low frequency clock needed by RTC0
 
-    let mut timer = Timer::new(board.TIMER0);
-    let mut display = Display::new(board.display_pins);
-    let mut game_board = GameState::new();
-    let mut frames_in_turn_count = 0;
+    let mut rtc0 = Rtc::new(board.RTC0, 327).unwrap();
+    rtc0.enable_event(RtcInterrupt::Tick);
+    rtc0.enable_interrupt(RtcInterrupt::Tick, None);
+    rtc0.enable_counter();
 
-    let mut left_button_down = false;
-    let mut right_button_down = false;
+    let peripherals_taken = PeripheralsTaken {
+        buttons: board.buttons,
+    };
 
-    let mut left_turn_count = 0;
-    let mut right_turn_count = 0;
+    let game_state = GameState::new();
+
+    let display = Display::new(board.TIMER1, board.display_pins);
+
+    cortex_m::interrupt::free(move |cs| {
+        *DISPLAY.borrow(cs).borrow_mut() = Some(display);
+        *FRAME_TIMER.borrow(cs).borrow_mut() = Some(rtc0);
+        *GAME_STATE.borrow(cs).borrow_mut() = Some(game_state);
+        *PERIPHERALS.borrow(cs).borrow_mut() = Some(peripherals_taken);
+    });
+
+    unsafe {
+        board.NVIC.set_priority(pac::Interrupt::TIMER1, 64);
+        board.NVIC.set_priority(pac::Interrupt::RTC0, 128);
+        pac::NVIC::unmask(pac::Interrupt::TIMER1);
+        pac::NVIC::unmask(pac::Interrupt::RTC0);
+    }
 
     loop {
-        defmt::trace!("Begin main loop");
-        defmt::trace!("Calling display.show");
-        display.show(&mut timer, game_board.render_image(), FRAME_TIME);
-
-        // detect a button press on button-up, not button-down, to help avoid repeats
-        if !left_button_down
-            && button_a.is_low().expect(
-                "Unexpected button error, button GPIO should be infallible on target platform!",
-            )
-        {
-            left_button_down = true;
-        }
-        if left_button_down
-            && button_a.is_high().expect(
-                "Unexpected button error, button GPIO should be infallible on target platform!",
-            )
-        {
-            left_turn_count += 1;
-            left_button_down = false;
-        }
-
-        if !right_button_down
-            && button_b.is_low().expect(
-                "Unexpected button error, button GPIO should be infallible on target platform!",
-            )
-        {
-            right_button_down = true;
-        }
-        if right_button_down
-            && button_b.is_high().expect(
-                "Unexpected button error, button GPIO should be infallible on target platform!",
-            )
-        {
-            right_turn_count += 1;
-            right_button_down = false;
-        }
-
-        if frames_in_turn_count == FRAMES_PER_MOVE {
-            if right_turn_count > 0 {
-                game_board.turn_right();
-            } else if left_turn_count > 0 {
-                game_board.turn_left();
-            }
-
-            game_board.update();
-            frames_in_turn_count = 0;
-            left_button_down = false;
-            right_button_down = false;
-            right_turn_count = 0;
-            left_turn_count = 0;
-        } else {
-            frames_in_turn_count += 1;
-        }
+        cortex_m::asm::wfi();
     }
+}
+
+#[interrupt]
+fn TIMER1() {
+    cortex_m::interrupt::free(move |cs| {
+        if let Some(display) = DISPLAY.borrow(cs).borrow_mut().as_mut() {
+            display.handle_display_event();
+        }
+    });
+}
+
+#[interrupt]
+fn RTC0() {
+    defmt::trace!("Begin RTC frame loop");
+
+    cortex_m::interrupt::free(move |cs| {
+        if let Some(game_state) = GAME_STATE.borrow(cs).borrow_mut().as_mut() {
+            let image = game_state.render_image();
+            if let Some(rtc0) = FRAME_TIMER.borrow(cs).borrow_mut().as_mut() {
+                rtc0.reset_event(RtcInterrupt::Tick);
+            }
+            if let Some(display) = DISPLAY.borrow(cs).borrow_mut().as_mut() {
+                defmt::trace!("Calling display.show");
+                display.show(&image);
+            }
+            if let Some(peripherals_taken) = PERIPHERALS.borrow(cs).borrow_mut().as_mut() {
+                let button_a = &mut peripherals_taken.buttons.button_a;
+                let button_b = &mut peripherals_taken.buttons.button_b;
+
+                // detect a button press on button-up, not button-down, to help avoid repeats
+                if !game_state.left_button_down
+                    && button_a.is_low().expect(
+                        "Unexpected button error, button GPIO should be infallible on target platform!",
+                    )
+                {
+                    game_state.left_button_down = true;
+                }
+                if game_state.left_button_down
+                    && button_a.is_high().expect(
+                        "Unexpected button error, button GPIO should be infallible on target platform!",
+                    )
+                {
+                    game_state.left_turn_count += 1;
+                    game_state.left_button_down = false;
+                }
+
+                if !game_state.right_button_down
+                    && button_b.is_low().expect(
+                        "Unexpected button error, button GPIO should be infallible on target platform!",
+                    )
+                {
+                    game_state.right_button_down = true;
+                }
+                if game_state.right_button_down
+                    && button_b.is_high().expect(
+                        "Unexpected button error, button GPIO should be infallible on target platform!",
+                    )
+                {
+                    game_state.right_turn_count += 1;
+                    game_state.right_button_down = false;
+                }
+
+                if game_state.frames_in_turn_count >= FRAMES_PER_MOVE {
+                    if game_state.right_turn_count > 0 {
+                        game_state.turn_right();
+                    } else if game_state.left_turn_count > 0 {
+                        game_state.turn_left();
+                    }
+
+                    game_state.update();
+                    game_state.frames_in_turn_count = 0;
+                    game_state.left_button_down = false;
+                    game_state.right_button_down = false;
+                    game_state.right_turn_count = 0;
+                    game_state.left_turn_count = 0;
+                } else {
+                    game_state.frames_in_turn_count += 1;
+                }
+            }
+        }
+    });
 }
