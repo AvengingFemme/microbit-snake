@@ -44,7 +44,19 @@ enum MoveDirection {
 }
 
 #[derive(Debug, Clone)]
-struct SnakeSegment(usize, usize);
+struct SnakeSegment(i32, i32);
+impl SnakeSegment {
+    fn grid_coordinates(&self) -> Option<(usize, usize)> {
+        let row = usize::try_from(self.0).ok()?;
+        let column = usize::try_from(self.1).ok()?;
+
+        if row < BOARD_HEIGHT && column < BOARD_WIDTH {
+            Some((row, column))
+        } else {
+            None
+        }
+    }
+}
 
 #[derive(Debug, Clone, defmt::Format)]
 struct Food(usize, usize);
@@ -129,7 +141,14 @@ impl GameState {
         ];
 
         for snake_segment in self.snake.iter() {
-            image_matrix[snake_segment.0][snake_segment.1] = 9;
+            if let Some((row, column)) = snake_segment.grid_coordinates() {
+                if let Some(cell) = image_matrix
+                    .get_mut(row)
+                    .and_then(|row| row.get_mut(column))
+                {
+                    *cell = 9;
+                }
+            }
         }
 
         if let Some(food) = &self.food {
@@ -157,7 +176,7 @@ impl GameState {
             MoveDirection::BoardDown => SnakeSegment(old_snake_head.0 + 1, old_snake_head.1),
         };
         // wall collision check
-        if new_snake_head.0 > (BOARD_HEIGHT - 1) || new_snake_head.1 > (BOARD_WIDTH - 1) {
+        let Some(new_snake_head_grid_coord) = new_snake_head.grid_coordinates() else {
             // die
             defmt::info!("Snake has died by colliding with a wall");
             self.dead = true;
@@ -165,27 +184,27 @@ impl GameState {
                 self.snake.push_front(old_snake_head),
                 "Snake deque unexpectedly full!"
             ); // have to put the old head back so it renders
-        } else {
-            if let Some(food) = &self.food {
-                if food.0 == new_snake_head.0 && food.1 == new_snake_head.1 {
-                    // ate the food, remove from screen and don't shrink the tail
-                    self.food = None;
-                } else {
-                    // no food eaten, remove the tail before we add the new head
-                    defmt::expect!(self.snake.pop_back(), "Snake deque unexpectedly empty!");
-                }
+            return;
+        };
+        if let Some(food) = &self.food {
+            if (food.0, food.1) == new_snake_head_grid_coord {
+                // ate the food, remove from screen and don't shrink the tail
+                self.food = None;
             } else {
+                // no food eaten, remove the tail before we add the new head
                 defmt::expect!(self.snake.pop_back(), "Snake deque unexpectedly empty!");
             }
-            defmt::expect!(
-                self.snake.push_front(old_snake_head),
-                "Snake deque unexpectedly full!"
-            );
-            defmt::expect!(
-                self.snake.push_front(new_snake_head),
-                "Snake deque unexpectedly full!"
-            );
+        } else {
+            defmt::expect!(self.snake.pop_back(), "Snake deque unexpectedly empty!");
         }
+        defmt::expect!(
+            self.snake.push_front(old_snake_head),
+            "Snake deque unexpectedly full!"
+        );
+        defmt::expect!(
+            self.snake.push_front(new_snake_head),
+            "Snake deque unexpectedly full!"
+        );
     }
 }
 
