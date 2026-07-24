@@ -4,6 +4,7 @@
 use core::cell::RefCell;
 use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
+use defmt_rtt as _;
 use embedded_hal::digital::InputPin;
 use heapless::Deque;
 use microbit::{
@@ -11,13 +12,17 @@ use microbit::{
     display::nonblocking::{Display, GreyscaleImage},
     hal::{
         clocks::Clocks,
+        rng,
         rtc::{Rtc, RtcInterrupt},
     },
     pac::{self, RTC0, TIMER1, interrupt},
 };
-
-use defmt_rtt as _;
 use panic_probe as _;
+use rand::prelude::*;
+use rand_pcg::{
+    Pcg32,
+    rand_core::{Rng, SeedableRng},
+};
 
 const BOARD_WIDTH: usize = 5;
 const BOARD_HEIGHT: usize = 5;
@@ -158,7 +163,7 @@ impl GameState {
         GreyscaleImage::new(&image_matrix)
     }
 
-    fn update(&mut self) {
+    fn update(&mut self, rng: &mut dyn Rng) {
         defmt::trace!("begin update call");
 
         if self.dead {
@@ -190,6 +195,25 @@ impl GameState {
             if (food.0, food.1) == new_snake_head_grid_coord {
                 // ate the food, remove from screen and don't shrink the tail
                 self.food = None;
+
+                // randomly generate a new food location, but only using it if it didn't collide with the snake
+                while self.food.is_none() {
+                    let new_food = Food(
+                        rng.random_range(0..BOARD_HEIGHT),
+                        rng.random_range(0..BOARD_WIDTH),
+                    );
+                    let mut snake_food_collided = false;
+                    for snake_segment in self.snake.iter() {
+                        if let Some(snake_grid_coordinates) = snake_segment.grid_coordinates() {
+                            if (new_food.0, new_food.1) == snake_grid_coordinates {
+                                snake_food_collided = true;
+                            }
+                        }
+                    }
+                    if !snake_food_collided {
+                        self.food = Some(new_food);
+                    }
+                }
             } else {
                 // no food eaten, remove the tail before we add the new head
                 defmt::expect!(self.snake.pop_back(), "Snake deque unexpectedly empty!");
@@ -210,6 +234,7 @@ impl GameState {
 
 struct PeripheralsTaken {
     buttons: Buttons,
+    prng: Pcg32,
 }
 
 static DISPLAY: Mutex<RefCell<Option<Display<TIMER1>>>> = Mutex::new(RefCell::new(None));
@@ -227,6 +252,13 @@ fn main() -> ! {
 
     Clocks::new(board.CLOCK).start_lfclk(); //start low frequency clock needed by RTC0
 
+    // derive seed from hardware RNG for use in PRNG
+    let mut rng = rng::Rng::new(board.RNG);
+    let mut seed: [u8; 16] = [0; 16];
+    rng.random(&mut seed);
+
+    let prng = Pcg32::from_seed(seed);
+
     let mut rtc0 = Rtc::new(board.RTC0, 327).unwrap();
     rtc0.enable_event(RtcInterrupt::Tick);
     rtc0.enable_interrupt(RtcInterrupt::Tick, None);
@@ -234,6 +266,7 @@ fn main() -> ! {
 
     let peripherals_taken = PeripheralsTaken {
         buttons: board.buttons,
+        prng: prng,
     };
 
     let game_state = GameState::new();
@@ -326,7 +359,7 @@ fn RTC0() {
                         game_state.turn_left();
                     }
 
-                    game_state.update();
+                    game_state.update(&mut peripherals_taken.prng);
                     game_state.frames_in_turn_count = 0;
                     game_state.left_button_down = false;
                     game_state.right_button_down = false;

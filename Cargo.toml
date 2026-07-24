@@ -12,6 +12,14 @@ microbit-v2 = "0.16.0"
 embedded-hal = "1.0.0"
 heapless = "0.9.3"
 
+[dependencies.rand_pcg]
+default-features = false
+version = "0.10.2"
+
+[dependencies.rand]
+default-features = false
+version = "0.10.2"
+
 [dependencies.cortex-m]
 version = "0.7.7"
 features = ["inline-asm", "critical-section-single-core"]
